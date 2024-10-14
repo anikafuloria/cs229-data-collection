@@ -2,53 +2,102 @@ import os
 import requests
 from bs4 import BeautifulSoup
 
-# Function to generate Genius URL from artist and song name
-def create_genius_url(artist, song_title):
-    # Convert to lowercase, replace spaces with dashes
-    artist = artist.lower().replace(' ', '-')
-    song_title = song_title.lower().replace(' ', '-')
-    
-    # Remove special characters (apostrophes, punctuation, etc.)
-    artist = re.sub(r'[^\w-]', '', artist)
-    song_title = re.sub(r'[^\w-]', '', song_title)
-    
-    return f"https://genius.com/{artist}-{song_title}-lyrics"
+# Set your Genius API credentials here
+GENIUS_ACCESS_TOKEN = "TOKEN"
 
-# Function to scrape lyrics from Genius
-def get_lyrics(artist, song_title):
-    url = create_genius_url(artist, song_title)
+# Base URL for the Genius API
+GENIUS_API_URL = "https://api.genius.com"
+
+# Function to search for a song on Genius and get its ID
+def search_song(artist, song_title):
+    headers = {
+        "Authorization": f"Bearer {GENIUS_ACCESS_TOKEN}"
+    }
+    
+    search_url = f"{GENIUS_API_URL}/search"
+    query = f"{song_title} {artist}"
+    
+    params = {"q": query}
+    
+    response = requests.get(search_url, headers=headers, params=params)
+    
+    if response.status_code != 200:
+        raise Exception(f"Error: Failed to fetch song data for {artist} - {song_title}")
+    
+    response_data = response.json()
+    hits = response_data["response"]["hits"]
+    
+    if len(hits) == 0:
+        raise Exception(f"Error: No results found for {artist} - {song_title}")
+    
+    song_id = hits[0]["result"]["id"]
+    return song_id
+
+
+# Function to get song lyrics URL by song ID
+def get_song_lyrics_url(song_id):
+    headers = {
+        "Authorization": f"Bearer {GENIUS_ACCESS_TOKEN}"
+    }
+    
+    song_url = f"{GENIUS_API_URL}/songs/{song_id}"
+    response = requests.get(song_url, headers=headers)
+    
+    if response.status_code != 200:
+        raise Exception(f"Error: Failed to fetch lyrics for song ID {song_id}")
+    
+    song_data = response.json()["response"]["song"]
+    lyrics_url = song_data["url"]
+    return lyrics_url
+
+
+# Function to fetch the raw lyrics from the Genius lyrics page
+def fetch_raw_lyrics(lyrics_url):
+    response = requests.get(lyrics_url)
+    
+    if response.status_code != 200:
+        raise Exception(f"Error: Genius lyrics page not found at {lyrics_url}")
+    
+    # Parse the HTML page to extract the lyrics
+    soup = BeautifulSoup(response.content, 'html.parser')
+    
+    # Lyrics are typically inside <div> with a data-lyrics-container attribute
+    lyrics_div = soup.find_all('div', {'data-lyrics-container': 'true'})
+    
+    if not lyrics_div:
+        raise Exception(f"Error: Could not find lyrics on the page {lyrics_url}")
+    
+    # Combine all parts of the lyrics
+    lyrics = '\n'.join([div.get_text(separator='\n') for div in lyrics_div])
+    
+    return lyrics.strip()
+
+
+# Function to get and save song lyrics
+def save_lyrics(artist, song_title):
     try:
-        # Make the request to the Genius page
-        response = requests.get(url)
-        if response.status_code != 200:
-            raise Exception(f"Error: Genius page not found for {artist} - {song_title}")
-
-        # Parse the page content
-        soup = BeautifulSoup(response.content, 'lxml')
-        # Genius uses a div with the class 'lyrics' or sometimes annotated text within 'p' tags
-        lyrics = soup.find('div', class_='lyrics') or soup.find_all('p')
+        # Search for the song to get its Genius ID
+        song_id = search_song(artist, song_title)
         
-        if not lyrics:
-            raise Exception(f"Error: Could not find lyrics for {artist} - {song_title}")
-
-        # Extract lyrics text from div/p elements
-        if isinstance(lyrics, list):  # When lyrics are in <p> tags
-            lyrics = '\n'.join([verse.get_text() for verse in lyrics])
-        else:
-            lyrics = lyrics.get_text()
-
-        # Save the lyrics to a text file
-        file_name = f"{artist}-{song_title}.txt".replace(' ', '_')
+        # Get the song's Genius lyrics URL
+        lyrics_url = get_song_lyrics_url(song_id)
+        
+        # Fetch the raw lyrics from the lyrics page
+        lyrics = fetch_raw_lyrics(lyrics_url)
+        
+        # Save the lyrics in a text file
+        file_name = f"{artist}-{song_title}.txt".replace(' ', '_').lower()
         with open(file_name, 'w', encoding='utf-8') as f:
-            f.write(lyrics.strip())
-
+            f.write(lyrics)
+        
         print(f"Lyrics saved to {file_name}")
-
+    
     except Exception as e:
         # Log the error into error.txt
         with open('error.txt', 'a', encoding='utf-8') as f:
             f.write(f"{artist} - {song_title}: {str(e)}\n")
         print(f"Error: {e}")
+
 
 if __name__ == '__main__':
     songs = [
@@ -70,9 +119,9 @@ if __name__ == '__main__':
         ("Ariana Grande", "thank u, next"),
         ("Sam Smith", "Stay With Me"),
         ("Katy Perry", "Firework"),
-        ("Lady Gaga", "Shallow")
+        ("Lady Gaga", "Shallow"),
+        ("Charli xcx", "Sympathy is a knife")
     ]
-
     
     for artist, song in songs:
-        get_lyrics(artist, song)
+        save_lyrics(artist, song)
